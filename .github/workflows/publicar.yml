@@ -90,9 +90,11 @@ jobs:
           TT_CLIENT_KEY: ${{ secrets.TT_CLIENT_KEY }}
           TT_CLIENT_SECRET: ${{ secrets.TT_CLIENT_SECRET }}
           TT_TOKEN: ${{ secrets.TT_TOKEN }}
+          FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
+          FB_PAGE_TOKEN: ${{ secrets.FB_PAGE_TOKEN }}
         run: |
           mkdir -p credenciales && chmod 700 credenciales
-          printf 'IG_USER_ID=%s\nIG_ACCESS_TOKEN=%s\nTT_CLIENT_KEY=%s\nTT_CLIENT_SECRET=%s\n' "$IG_USER_ID" "$IG_ACCESS_TOKEN" "$TT_CLIENT_KEY" "$TT_CLIENT_SECRET" > credenciales/claves.env
+          printf 'IG_USER_ID=%s\nIG_ACCESS_TOKEN=%s\nTT_CLIENT_KEY=%s\nTT_CLIENT_SECRET=%s\nFB_PAGE_ID=%s\nFB_PAGE_TOKEN=%s\n' "$IG_USER_ID" "$IG_ACCESS_TOKEN" "$TT_CLIENT_KEY" "$TT_CLIENT_SECRET" "$FB_PAGE_ID" "$FB_PAGE_TOKEN" > credenciales/claves.env
           printf '%s' "$YT_CLIENT_SECRET" > credenciales/youtube_client_secret.json
           printf '%s' "$YT_TOKEN" > credenciales/youtube_token.json
           # TikTok is optional until it is connected: no secret, no token file, and the prompt skips it

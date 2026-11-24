@@ -42,6 +42,12 @@ jobs:
           if [ "${{ github.event_name }}" = schedule ] && grep -q "^## Franja ${FRANJA}:00" "$f" 2>/dev/null; then
             echo "hecho=si" >> "$GITHUB_OUTPUT"; echo "La franja $FRANJA ya se publicó hoy: no se repite."
           fi
+          # GitHub sometimes fires a cron hours late: outside its window (Ecuador time) a scheduled run does nothing,
+          # so a late franja 19 never publishes after midnight as the next day's "19:00"
+          h=$((10#$(TZ=America/Guayaquil date +%H)))
+          if [ "${{ github.event_name }}" = schedule ] && { { [ "$FRANJA" = 12 ] && [ $h -lt 10 -o $h -ge 17 ]; } || { [ "$FRANJA" = 19 ] && [ $h -lt 17 ]; }; }; then
+            echo "hecho=si" >> "$GITHUB_OUTPUT"; echo "Cron retrasado ($h h) fuera de la ventana de la franja $FRANJA: no se publica."
+          fi
 
   publicar:
     needs: comprobar

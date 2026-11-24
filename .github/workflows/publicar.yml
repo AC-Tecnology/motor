@@ -15,6 +15,9 @@ on:
       franja:
         description: "Franja (12 o 19)"
         default: "12"
+      forzar:
+        description: "si = publicar aunque la franja ya figure en el registro"
+        default: "no"
 
 concurrency:
   group: publicar
@@ -36,10 +39,11 @@ jobs:
       # runs after any earlier run of the day (same concurrency group), so its registro is already pushed
       - id: registro
         env:
-          FRANJA: ${{ (contains(github.event.schedule, ' 15 ') || contains(github.event.schedule, ' 16 ')) && '12' || '19' }}
+          FRANJA: ${{ github.event.inputs.franja || (contains(github.event.schedule, ' 15 ') || contains(github.event.schedule, ' 16 ')) && '12' || '19' }}
         run: |
           f="automatizacion/registro/$(TZ=America/Guayaquil date +%F).md"
-          if [ "${{ github.event_name }}" = schedule ] && grep -q "^## Franja ${FRANJA}:00" "$f" 2>/dev/null; then
+          # the same slot may be woken by GitHub's cron and by cron-job.org: only the first one publishes
+          if [ "${{ github.event.inputs.forzar }}" != "si" ] && grep -q "^## Franja ${FRANJA}:00" "$f" 2>/dev/null; then
             echo "hecho=si" >> "$GITHUB_OUTPUT"; echo "La franja $FRANJA ya se publicó hoy: no se repite."
           fi
           # GitHub sometimes fires a cron hours late: outside its window (Ecuador time) a scheduled run does nothing,

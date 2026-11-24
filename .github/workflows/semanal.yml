@@ -1,0 +1,85 @@
+# Produce el resumen semanal (video largo + miniatura + shorts de reserva) cada viernes por la mañana; se publica a las 17:00.
+# Con la auditoría de YouTube aprobada (variable YT_AUDITORIA_OK=1) lo sube programado; si no, avisa en el issue
+# «Pendientes de subir a YouTube» con el enlace de descarga y los textos.
+name: Resumen semanal
+
+on:
+  schedule:
+    - cron: "23 14 * * 5"  # viernes 09:23 Ecuador (minuto suelto: GitHub descarta cron en punto)
+  workflow_dispatch:
+
+concurrency:
+  group: publicar
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  semanal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      TZ: America/Guayaquil
+      GH_TOKEN: ${{ secrets.DATOS_PAT }}
+      DATOS_REPO: ${{ vars.DATOS_REPO }}
+      YT_AUDITORIA_OK: ${{ vars.YT_AUDITORIA_OK }}
+      PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.DATOS_REPO }}
+          token: ${{ secrets.DATOS_PAT }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Caché de modelos de voz y ASR
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/gnuxdar-video-tools/models
+          key: modelos-v2
+
+      - name: Caché de paquetes de node
+        uses: actions/cache@v4
+        with:
+          path: scripts/node_modules
+          key: node-${{ hashFiles('scripts/package.json') }}
+
+      - name: Preparar la máquina
+        run: bash automatizacion/setup_ci.sh
+
+      - name: Credenciales
+        env:
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_TOKEN: ${{ secrets.YT_TOKEN }}
+        run: |
+          mkdir -p credenciales && chmod 700 credenciales
+          printf 'IG_USER_ID=%s\nIG_ACCESS_TOKEN=%s\nPIXABAY_API_KEY=%s\n' "$IG_USER_ID" "$IG_ACCESS_TOKEN" "$PIXABAY_API_KEY" > credenciales/claves.env
+          printf '%s' "$YT_CLIENT_SECRET" > credenciales/youtube_client_secret.json
+          printf '%s' "$YT_TOKEN" > credenciales/youtube_token.json
+          chmod 600 credenciales/*
+
+      - name: Claude produce el resumen
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          npm install -g @anthropic-ai/claude-code >/dev/null
+          mkdir -p salida
+          claude -p "$(cat automatizacion/prompt-semanal.md)" \
+            --model claude-sonnet-5-5 \
+            --allowedTools "Bash,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch" \
+            --max-turns 400 > salida/claude.log 2>&1 \
+            && echo "Claude terminó bien" || { echo "::error::Claude falló (detalle en el registro privado)"; exit 1; }
+
+      - name: Guardar cambios del cerebro, la cola y los textos
+        if: always()
+        run: |
+          git config user.name "AC Tecnology Bot"
+          git config user.email "ac-tecnology-bot@users.noreply.github.com"
+          mkdir -p automatizacion/registro/claude && cp salida/claude.log "automatizacion/registro/claude/$(date +%F_%H%M).log" 2>/dev/null || true
+          for p in cerebro-youtube cola automatizacion/registro "produccion/*/guion.py" "produccion/*/publicado" "produccion/*/scenes.json"; do git add $p 2>/dev/null || true; done
+          git diff --cached --quiet || { git commit -m "Resumen semanal: $(date +%Y-%m-%d)"; git pull --rebase --autostash -q && git push -q; }

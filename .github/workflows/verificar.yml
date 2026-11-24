@@ -1,0 +1,73 @@
+# Comprueba que cada secreto funciona, sin publicar nada. Ejecutar a mano desde la pestaña Actions.
+name: Verificar secretos
+
+on:
+  workflow_dispatch:
+
+jobs:
+  verificar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.DATOS_REPO }}
+          token: ${{ secrets.DATOS_PAT }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Datos privados (DATOS_PAT)
+        env:
+          GH_TOKEN: ${{ secrets.DATOS_PAT }}
+        run: |
+          gh api "repos/${{ vars.DATOS_REPO }}" -q '"datos: " + .full_name + " · escritura: " + (.permissions.push|tostring)' | tee /tmp/d.txt
+          grep -q "escritura: true" /tmp/d.txt
+
+      - name: Claude (CLAUDE_CODE_OAUTH_TOKEN)
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ] || { echo "::error::falta CLAUDE_CODE_OAUTH_TOKEN"; exit 1; }
+          case "$CLAUDE_CODE_OAUTH_TOKEN" in *$'\n'*|*' '*) echo "::error::el token tiene saltos de línea o espacios"; exit 1;; esac
+          npm install -g @anthropic-ai/claude-code >/dev/null
+          out=$(claude -p "Responde solo con la palabra: listo" --max-turns 1)
+          echo "Claude respondió: $out"; echo "$out" | grep -qi listo
+
+      - name: Sitio canal (CANAL_PAT)
+        env:
+          CANAL_PAT: ${{ secrets.CANAL_PAT }}
+        run: |
+          code=$(curl -s -o /tmp/r.json -w '%{http_code}' -H "Authorization: Bearer $CANAL_PAT" https://api.github.com/repos/AC-Tecnology/canal)
+          [ "$code" = 200 ] || { echo "::error::CANAL_PAT no accede al repo canal ($code)"; exit 1; }
+          python3 -c "import json;p=json.load(open('/tmp/r.json'))['permissions'];print('permisos:',p);assert p['push'],'sin permiso de escritura'"
+
+      - name: Sitio temporal (subir, comprobar y limpiar sin publicar nada)
+        env:
+          CANAL_PAT: ${{ secrets.CANAL_PAT }}
+        run: |
+          echo "prueba $(date -u)" > /tmp/prueba.txt
+          url=$(bash automatizacion/sitio_temporal.sh subir /tmp/prueba.txt prueba-verificacion.txt)
+          echo "respondió: $url"
+          bash automatizacion/sitio_temporal.sh limpiar
+          for i in $(seq 1 36); do c=$(curl -s -o /dev/null -w '%{http_code}' "$url"); [ "$c" = 404 ] && break; sleep 5; done
+          echo "tras limpiar: $c"; [ "$c" = 404 ]
+
+      - name: Instagram (IG_USER_ID, IG_ACCESS_TOKEN)
+        env:
+          T: ${{ secrets.IG_ACCESS_TOKEN }}
+        run: |
+          curl -sf "https://graph.instagram.com/v22.0/me?fields=username,account_type,followers_count&access_token=$T" | python3 -c "import json,sys;d=json.load(sys.stdin);print('Instagram:',d['username'],d['account_type'],d['followers_count'],'seguidores')"
+
+      - name: YouTube (YT_CLIENT_SECRET, YT_TOKEN)
+        env:
+          CS: ${{ secrets.YT_CLIENT_SECRET }}
+          TK: ${{ secrets.YT_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.parse, urllib.request
+          c = json.loads(os.environ["CS"])["installed"]; t = json.loads(os.environ["TK"])
+          r = json.load(urllib.request.urlopen(urllib.request.Request(c["token_uri"], data=urllib.parse.urlencode({"client_id": c["client_id"], "client_secret": c["client_secret"], "refresh_token": t["refresh_token"], "grant_type": "refresh_token"}).encode())))
+          ch = json.load(urllib.request.urlopen(urllib.request.Request("https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics&mine=true", headers={"Authorization": "Bearer " + r["access_token"]})))["items"][0]
+          print("YouTube:", ch["snippet"]["title"], ch["snippet"].get("customUrl"), ch["statistics"]["subscriberCount"], "suscriptores")
+          PY

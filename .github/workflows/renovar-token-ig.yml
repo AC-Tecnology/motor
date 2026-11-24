@@ -1,0 +1,47 @@
+# Renueva cada lunes el token de Instagram (dura 60 días) y guarda el nuevo en el secreto IG_ACCESS_TOKEN.
+# Instagram solo renueva tokens válidos con al menos 24 h de antigüedad. Necesita SECRETS_PAT
+# (token fine-grained de AC-Tecnology, solo este repositorio, permiso "Secrets: Read and write").
+name: Renovar token de Instagram
+
+on:
+  schedule:
+    - cron: "23 15 * * 1"  # lunes 10:23 Ecuador (minuto suelto: GitHub descarta cron en punto)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  renovar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.DATOS_REPO }}
+          token: ${{ secrets.DATOS_PAT }}
+
+      - name: Renovar y guardar el token
+        env:
+          OLD: ${{ secrets.IG_ACCESS_TOKEN }}
+          GH_TOKEN: ${{ secrets.SECRETS_PAT }}
+        run: |
+          [ -n "$GH_TOKEN" ] || { echo "::error::falta el secreto SECRETS_PAT"; exit 1; }
+          resp=$(curl -s "https://graph.instagram.com/refresh_access_token?grant_type=ig_refresh_token&access_token=$OLD")
+          NEW=$(printf '%s' "$resp" | python3 -c "import json,sys; print(json.load(sys.stdin).get('access_token',''))")
+          if [ -z "$NEW" ]; then
+            echo "::error::Instagram no renovó el token: $(printf '%s' "$resp" | python3 -c "import json,sys; print(json.load(sys.stdin).get('error',{}).get('message','sin detalle'))")"
+            exit 1
+          fi
+          echo "::add-mask::$NEW"
+          DAYS=$(printf '%s' "$resp" | python3 -c "import json,sys; print(round(json.load(sys.stdin).get('expires_in',0)/86400))")
+          # check the new token works before replacing the old one
+          curl -sf "https://graph.instagram.com/v22.0/me?fields=username&access_token=$NEW" | python3 -c "import json,sys; print('cuenta:', json.load(sys.stdin)['username'])"
+          printf '%s' "$NEW" | gh secret set IG_ACCESS_TOKEN -R "$GITHUB_REPOSITORY"
+          VENCE=$(date -u -d "+$DAYS days" +%Y-%m-%d)
+          echo "Token renovado: válido $DAYS días, vence el $VENCE"
+          # leave a non-secret trace of the expiry date in the repo
+          printf '{"renovado": "%s", "vence": "%s", "dias": %s}\n' "$(date -u +%Y-%m-%d)" "$VENCE" "$DAYS" > automatizacion/token_instagram.json
+          git config user.name "AC Tecnology Bot"; git config user.email "ac-tecnology-bot@users.noreply.github.com"
+          git add automatizacion/token_instagram.json
+          git diff --cached --quiet || { git commit -q -m "Token de Instagram renovado (vence $VENCE)"; git pull -q --rebase && git push -q; }
